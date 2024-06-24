@@ -108,7 +108,7 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [project.entry-points.'nomad.plugin']
-
+myparser = "nomad_parser_fhiaims.parsers:myparser"
 mypackage = "nomad_parser_fhiaims.schema_packages:mypackage"
 
 
