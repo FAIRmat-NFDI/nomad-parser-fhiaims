@@ -1,0 +1,3 @@
+data:
+  m_def: nomad_parser_fhiaims.schema_packages.mypackage.MySchema
+  name: Markus
