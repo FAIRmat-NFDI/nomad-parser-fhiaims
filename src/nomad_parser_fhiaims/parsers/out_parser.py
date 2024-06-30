@@ -151,7 +151,9 @@ class FHIAimsOutParser(TextParser):
                             'unit_cell',
                             r'Unit cell:'
                             + self.capture(self.re_non_greedy)
-                            + r'Atomic structure:',
+                            + r'Atomic structure:'
+                            + self.capture(self.re_non_greedy)
+                            + self.re_blank_line,
                             sub_parser=TextParser(
                                 quantities=[
                                     Quantity(
@@ -380,11 +382,22 @@ class FHIAimsOutParser(TextParser):
                     ]
                 ),
             ),
+            Quantity(
+                'scf_convergence',  # format 2
+                r'SCF\s\d+ :([\S\s]+)$',  # ! handle warnings
+                split_on=r'\|',
+                repeats={
+                    2: 'density',
+                    3: 'eigen_energy',
+                    4: 'total_energy',
+                    5: 'total_forces',
+                },
+            ),
         ]
 
         ion_output = [
             Quantity(
-                'energy_components',  # format 2
+                'energy_components',
                 r'Start decomposition of the XC Energy'
                 + self.capture(self.re_non_greedy)
                 + r'End decomposition of the XC Energy',
@@ -445,6 +458,20 @@ class FHIAimsOutParser(TextParser):
 
         workflows = [
             Quantity(
+                Program.version,
+                r'(?:Version|FHI\-aims version)\s*\:*\s*([\d\.]+)\s*',
+                repeats=False,
+            ),
+            Quantity(
+                'compilation',
+                r'Compiled on (\d+) at (\d+\:\d+\:\d+) on host (\S+)\.$',
+                repeats={
+                    1: 'date',
+                    2: 'time',
+                    3: Program.compilation_host,
+                },  # modify this to use Quantity, but shallow
+            ),
+            Quantity(
                 'ion_step',
                 r'Begin self-consistency loop:'
                 + self.capture(self.re_non_greedy)
@@ -456,7 +483,7 @@ class FHIAimsOutParser(TextParser):
                         ion_output,
                         Quantity(
                             'scf_step',
-                            r'Begin self-consistency iteration'
+                            r'Begin self-consistency iteration|Convergence:'
                             + self.capture(self.re_non_greedy)
                             + self.re_sep_short
                             + self.re_blank_line
@@ -474,29 +501,6 @@ class FHIAimsOutParser(TextParser):
         # old quantities
 
         calculation_quantities = [
-            Quantity(
-                'self_consistency',
-                r'Begin self\-consistency iteration #\s*\d+([\s\S]+?Total energy evaluation[s:\d\. ]+)',
-                repeats=True,
-                sub_parser=TextParser(quantities=scf_quantities),
-            ),
-            # different format for scf loop
-            Quantity(
-                'self_consistency',
-                rf'{self.re_n} *SCF\s*\d+\s*:([ \|\-\+Ee\d\.s]+)',
-                repeats=True,
-                sub_parser=TextParser(
-                    quantities=[
-                        Quantity(
-                            'scf_convergence',
-                            r'([\s\S]+)',
-                            str_operation=str_to_scf_convergence2,
-                            repeats=False,
-                            convert=False,
-                        )
-                    ]
-                ),
-            ),
             Quantity(
                 'structure',
                 rf'Atomic structure(.|\n)*\| *Atom *x \[A\] *y \[A\] *z \[A\]([\s\S]+?Species[\s\S]+?(?:{self.re_n} *{self.re_n}| 1\: ))',
@@ -689,29 +693,6 @@ class FHIAimsOutParser(TextParser):
         )
 
         self._quantities = [
-            Quantity(
-                Program.version,
-                r'(?:Version|FHI\-aims version)\s*\:*\s*([\d\.]+)\s*',
-                repeats=False,
-            ),
-            Quantity(
-                xsection_run.x_fhi_aims_program_compilation_date,
-                r'Compiled on ([\d\/]+)',
-                repeats=False,
-            ),
-            Quantity(
-                xsection_run.x_fhi_aims_program_compilation_time,
-                r'at (\d+\:\d+\:\d+)',
-                repeats=False,
-            ),
-            Quantity(Program.compilation_host, r'on host ([\w\.\-]+)', repeats=False),
-            date_time,
-            Quantity(
-                TimeRun.cpu1_start,
-                r'Time zero on CPU 1\s*:\s*([0-9\-E\.]+)\s*(?P<__unit>\w+)\.',
-                repeats=False,
-                dtype=float,
-            ),
             Quantity(
                 TimeRun.wall_start,
                 r'Internal wall clock time zero\s*:\s*([0-9\-E\.]+)\s*(?P<__unit>\w+)\.',
