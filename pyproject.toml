@@ -108,8 +108,8 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [project.entry-points.'nomad.plugin']
-myparser = "nomad_parser_fhiaims.parsers:myparser"
-mypackage = "nomad_parser_fhiaims.schema_packages:mypackage"
+fhiaimsparser = "nomad_parser_fhiaims.parsers:parser_entry_point"
+fhiaimsschemapackage = "nomad_parser_fhiaims.schema_packages:schema_package_entry_point"
 
 
 [tool.cruft]

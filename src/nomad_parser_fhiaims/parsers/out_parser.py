@@ -9,515 +9,392 @@ if TYPE_CHECKING:
     from structlog.stdlib import (
         BoundLogger,
     )
+from datetime import datetime
 
-from nomad.config import config
-from nomad.datamodel.results import Material, Results
-from nomad.parsing.parser import MatchingParser
 from nomad.parsing.file_parser import TextParser, Quantity
 from nomad.units import ureg
 
 import numpy as np
 
-configuration = config.get_plugin_entry_point('nomad_parser_fhiaims.parsers:myparser')
+
+RE_FLOAT = r'[-+]?\d+\.\d*(?:[Ee][-+]\d+)?'
+RE_N = r'[\n\r]'
 
 
-class Quantity(Quantity):
-    """
-    Class to define a table of quantities to be parsed in the TextParser.
+def str_to_unit(val_in):
+    val = val_in.strip().lower()
+    unit = None
+    if val.startswith('a'):
+        unit = 1 / ureg.angstrom
+    elif val.startswith('b'):
+        unit = 1 / ureg.bohr
+    return unit
 
-    Extends the semantics of repeats to accept, next to `bool` and `int`, a `dict` mapping.
-
-    Arguments:
-        quantity: string to identify the name or a metainfo quantity to initialize the
-            quantity object.
-        re_pattern: pattern to be used by re for matching. Ideally, overlaps among
-            quantities for a given parser should be avoided.
-        group_names: mapping from match group indices (-1) to their corresponding names.
-    """
-
-    def __init__(
-        self,
-        quantity: Union[str, 'mQuantity'],
-        re_pattern: Union[str, ParsePattern],
-        group_names: Dict[int, str] = None,
-        **kwargs,
-    ):
-        super().__init__(quantity, re_pattern, **kwargs)
-        self.group_names = group_names or {}
-
-    def parse(self, text: str) -> List[Quantity]:
-        """
-        Parse the text to extract quantities based on the re_pattern and group_names.
-
-        Arguments:
-            text: The text to parse.
-
-        Returns:
-            List of Quantity objects.
-        """
-        quantities = []
-        pattern = re.compile(self.re_pattern)
-        matches = pattern.finditer(text)
-
-        if isinstance(self.repeats, dict):
-            for match in matches:
-                row = {}
-                for group_idx, name in self.repeats.items():
-                    try:
-                        value = match.group(group_idx)
-                        if value:
-                            quantity = Quantity(name, self.re_pattern, **self.kwargs)
-                            quantity_data = quantity.to_data(value)
-                            row[name] = quantity_data
-                    except IndexError:
-                        # group index not found in the match, skip
-                        continue
-                quantities.append(row)
-        else:
-            for match in matches:
-                for group_idx, name in self.group_names.items():
-                    try:
-                        value = match.group(group_idx)
-                        if value:
-                            quantity = Quantity(name, self.re_pattern, **self.kwargs)
-                            quantity_data = quantity.to_data(value)
-                            quantities.append(Quantity(name, value, **self.kwargs))
-                    except IndexError:
-                        # group index not found in the match, skip
-                        continue
-
-        return quantities
 
 
 class FHIAimsOutParser(TextParser):
     def __init__(self):
-        # TODO move these to text parser?
+        self._re_gw_flag = rf'{RE_N}\s*(?:qpe_calc|sc_self_energy)\s*([\w]+)'
         super().__init__(None)
 
-        self.re_non_greedy = r'[\s\S]+?'
-        self.re_blank_line = r'^\s*$'
-        self.re_float = r'[\-+]?\d+\.?\d*[Ee]?[\-+]?\d*'
-        self.re_n = r'[\n\r]'  # ? make it eol with `$`
-
-        self.re_sep_short = r'\-{60}$'
-        self.re_sep_long = r'\-{78}$'
-
-    def capture(to_match, rep: int = 0):
-        if rep:
-            return rf'[\s+({to_match})]{{{rep}}}'
-        return rf'({to_match})'
-
     def init_quantities(self):
-        # new quantities
-        geometry_description = [
-            Quantity(
-                'symmetry',
-                r'Symmetry information'
-                + self.capture(self.re_non_greedy)
-                + self.re_blank_line,
-                sub_parser=TextParser(
-                    quantities=[
-                        Quantity(
-                            'precision',
-                            r'Precision set to\s+' + self.capture({self.re_float}),
-                            dtype=np.float64,
-                        ),
-                        Quantity(
-                            'space_group_number',
-                            r'Space group\s+: ' + self.capture(r'\d+'),
-                            dtype=int,
-                        ),
-                        Quantity(
-                            'space_group_symbol',
-                            r'International\s+: ' + self.capture(r'[\w\d]+'),
-                            dtype=str,
-                        ),
-                        Quantity(
-                            'space_group_schoenflies',
-                            r'Schoenflies\s+: ' + self.capture(r'[\w\d]+'),
-                            dtype=str,
-                        ),
-                    ]
-                ),
-            ),
-            Quantity(
-                'geometry',
-                r'Input geometry:'
-                + self.capture(self.re_non_greedy)
-                + self.re_blank_line,
-                sub_parser=TextParser(
-                    quantities=[
-                        Quantity(
-                            'unit_cell',
-                            r'Unit cell:'
-                            + self.capture(self.re_non_greedy)
-                            + r'Atomic structure:'
-                            + self.capture(self.re_non_greedy)
-                            + self.re_blank_line,
-                            sub_parser=TextParser(
-                                quantities=[
-                                    Quantity(
-                                        'lattice_vector',
-                                        r'\s+\|'
-                                        + self.capture(self.re_non_greedy)
-                                        + r'$',
-                                        repeats=True,
-                                        sub_parser=TextParser(
-                                            quantities=[
-                                                Quantity(
-                                                    'vector',
-                                                    self.capture(self.re_float, rep=3),
-                                                    dtype=np.float64,
-                                                    repeats=3,
-                                                ),
-                                            ]
-                                        ),
-                                    ),
-                                ]
-                            ),
-                        ),
-                        Quantity(
-                            'atomic_structure',
-                            r'\d+: Species([\w\s]+)',
-                            repeats=True,
-                            sub_parser=TextParser(
-                                quantities=[
-                                    Quantity(
-                                        'species',
-                                        r'([A-Z][a-z]*)',
-                                        repeats=True,
-                                    ),
-                                    Quantity(
-                                        'cartesian_positions',
-                                        self.re_float,
-                                        repeats=3,
-                                        dtype=np.float64,
-                                    ),
-                                ]
-                            ),
-                        ),
-                    ]
-                ),
-            ),
-            Quantity(
-                'lattice_parameters',
-                r'Lattice parameters for 3D lattice'
-                + self.capture(self.re_non_greedy)
-                + r'$',
-                sub_parser=TextParser(
-                    quantities=[
-                        Quantity(
-                            'lattice_units',
-                            r'\(in ' + self.capture(r'[\w]+') + r'\)',
-                            str_operation=lambda x: ureg(x),  #! map
-                        ),
-                        Quantity(
-                            'lattice_vectors',
-                            self.capture(self.re_float, rep=3),
-                            dtype=np.float64,
-                            repeats=3,
-                        ),
-                    ]
-                ),
-            ),
-            Quantity(
-                'lattice_angles',
-                r'Angle(s) between unit vectors' + self.re_non_greedy + r'$',
-                sub_parser=TextParser(
-                    quantities=[
-                        Quantity(
-                            'lattice_units',
-                            r'\(in ' + self.capture(r'[\w]+') + r'\)',
-                            str_operation=lambda x: ureg(x),  #! map
-                        ),
-                        Quantity(
-                            'lattice_angles',
-                            self.capture(self.re_float, rep=3),
-                            dtype=np.float64,
-                            repeats=3,
-                        ),
-                    ]
-                ),
-            ),
-            Quantity(
-                'lattice_derived',
-                r'Quantities derived from the lattice vectors:'
-                + self.capture(self.re_non_greedy)
-                + self.re_blank_line,
-                sub_parser=TextParser(
-                    quantities=[
-                        Quantity(
-                            'reciprocal_lattice_vector',
-                            r'Reciprocal lattice vector'
-                            + self.capture(self.re_non_greedy)
-                            + r'$',
-                            repeats=True,
-                            sub_parser=TextParser(
-                                quantities=[
-                                    Quantity(
-                                        'vector',
-                                        self.capture(self.re_float, rep=3),
-                                        dtype=np.float64,
-                                        repeats=3,
-                                    ),
-                                ]
-                            ),
-                        ),
-                        Quantity(
-                            'cell_volume',
-                            r'Unit cell volume\s+:'
-                            + self.capture(self.re_float)
-                            + r'\w+',
-                            dtype=np.float64,
-                        ),
-                        Quantity(
-                            'cell_volume_units',
-                            r'Unit cell volume\s+:'
-                            + self.re_float
-                            + self.capture(r'\w+'),
-                            str_operation=lambda x: ureg(x),  #! map
-                        ),
-                    ]
-                ),
-            ),
-        ]
+        units_mapping = {'Ha': ureg.hartree, 'eV': ureg.eV}
 
-        scf_output = [
+        def str_to_energy_components(val_in):
+            val = [v.strip() for v in val_in.strip().splitlines()]
+            res = dict()
+            for v in val:
+                v = v.lstrip(' |').strip().split(':')
+                if len(v) < 2 or not v[1]:
+                    continue
+                vi = v[1].split()
+                if not vi[0][-1].isdecimal() or len(vi) < 2:
+                    continue
+                unit = units_mapping.get(vi[1], None)
+                res[v[0].strip()] = (
+                    float(vi[0]) * unit if unit is not None else float(vi[0])
+                )
+            return res
+
+        def str_to_scf_convergence(val_in):
+            res = dict()
+            for v in val_in.strip().splitlines():
+                v = v.lstrip(' |').split(':')
+                if len(v) != 2:
+                    break
+                vs = v[1].split()
+                unit = None
+                if len(vs) > 1:
+                    unit = units_mapping.get(vs[1], None)
+                res[v[0].strip()] = (
+                    float(vs[0]) * unit if unit is not None else float(vs[0])
+                )
+            return res
+
+        def str_to_atomic_forces(val_in):
+            val = [v.lstrip(' |').split() for v in val_in.strip().splitlines()]
+            forces = np.array([v[1:4] for v in val if len(v) == 4], dtype=float)
+            return forces * ureg.eV / ureg.angstrom
+
+        def str_to_dos_files(val_in):
+            val = [v.strip() for v in val_in.strip().splitlines()]
+            files = []
+            species = []
+            for v in val[1:]:
+                if v.startswith('| writing') and 'raw data' in v:
+                    files.append(v.split('to file')[1].strip(' .'))
+                    if 'for species' in v:
+                        species.append(v.split('for species')[1].split()[0])
+                elif not v.startswith('|'):
+                    break
+            return files, list(set(species))
+
+        def str_to_array_size_parameters(val_in):
+            val = [v.lstrip(' |').split(':') for v in val_in.strip().splitlines()]
+            return {v[0].strip(): int(v[1]) for v in val if len(v) == 2}
+
+        def str_to_species_in(val_in):
+            val = [v.strip() for v in val_in.splitlines()]
+            data = []
+            species = dict()
+            for i in range(len(val)):
+                if val[i].startswith('Reading configuration options for species'):
+                    if species:
+                        data.append(species)
+                    species = dict(species=val[i].split('species')[1].split()[0])
+                elif not val[i].startswith('| Found'):
+                    continue
+                val[i] = val[i].split(':')
+                if len(val[i]) == 1:
+                    val[i] = val[i][0].split('treatment for')
+                if len(val[i]) < 2:
+                    continue
+                k = val[i][0].split('Found')[1].strip()
+                v = val[i][1].replace(',', '').split()
+                if 'Gaussian basis function' in k and 'elementary' in v:
+                    n_gaussians = int(v[v.index('elementary') - 1])
+                    for j in range(n_gaussians):
+                        v.extend(val[i + j + 1].lstrip('|').split())
+                v = v[0] if len(v) == 1 else v
+                if val[i][0] in species:
+                    species[k].extend([v])
+                else:
+                    species[k] = [v]
+            data.append(species)
+            return data
+
+        def str_to_species(val_in):
+            data = dict()
+            val = [v.strip() for v in val_in.splitlines()]
+            for i in range(len(val)):
+                if val[i].startswith('species'):
+                    data['species'] = val[i].split()[1]
+                elif not val[i].startswith('| Found'):
+                    continue
+                val[i] = val[i].split(':')
+                if len(val[i]) == 1:
+                    val[i] = val[i][0].split('treatment for')
+                if len(val[i]) < 2:
+                    continue
+                k = val[i][0].split('Found')[1].strip()
+                v = val[i][1].replace(',', '').split()
+                if 'Gaussian basis function' in k and 'elementary' in v:
+                    n_gaussians = int(v[v.index('elementary') - 1])
+                    for j in range(n_gaussians):
+                        v.extend(val[i + j + 1].lstrip('|').split())
+                v = v[0] if len(v) == 1 else v
+                if k in data:
+                    data[k].extend([v])
+                else:
+                    data[k] = [v]
+            return data
+
+        structure_quantities = [
             Quantity(
-                'eigenvalues',
-                r'Writing Kohn\-Sham eigenvalues.'
-                + self.re_blank_line
-                + self.re_non_greedy
-                + self.re_blank_line,
+                'labels',
+                rf'(?:Species\s*([A-Z][a-z]*)|([A-Z][a-z]*)\w*{RE_N})',
                 repeats=True,
-                sub_parser=TextParser(
-                    quantities=[
-                        Quantity(
-                            'line',
-                            self.capture(self.re_float, rep=4),
-                            repeats={1: 'state', 2: 'occupation', 4: 'eigenvalue'},
-                        ),
-                    ]
-                ),
             ),
             Quantity(
-                'energy_components',  # format 1
-                r'Total energy components:'
-                + self.capture(self.re_non_greedy)
-                + self.re_blank_line,
-                sub_parser=TextParser(
-                    quantities=[
-                        Quantity(
-                            'eigenvalues',
-                            r'Sum of eigenvalues'
-                            + self.re_non_greedy
-                            + self.capture(self.re_float)
-                            + r' eV$',
-                            dtype=np.float64,
-                        ),
-                        Quantity(
-                            'xc_energy',
-                            r'XC energy correction'
-                            + self.re_non_greedy
-                            + self.capture(self.re_float)
-                            + r' eV$',
-                            dtype=np.float64,
-                        ),
-                        Quantity(
-                            'xc_potential',
-                            r'XC potential correction'
-                            + self.re_non_greedy
-                            + self.capture(self.re_float)
-                            + r' eV$',
-                            dtype=np.float64,
-                        ),
-                        Quantity(
-                            'atomic_electrostatic',
-                            r'Free-atom electrostatic energy'
-                            + self.re_non_greedy
-                            + self.capture(self.re_float)
-                            + r' eV$',
-                            dtype=np.float64,
-                        ),
-                        Quantity(
-                            'hartree',
-                            r'Hartree energy correction'
-                            + self.re_non_greedy
-                            + self.capture(self.re_float)
-                            + r' eV$',
-                            dtype=np.float64,
-                        ),
-                        Quantity(
-                            'entropy',
-                            r'Entropy correction'
-                            + self.re_non_greedy
-                            + self.capture(self.re_float)
-                            + r' eV$',
-                            dtype=np.float64,
-                        ),
-                        Quantity(
-                            'total_energy',
-                            r'Total energy'
-                            + self.re_non_greedy
-                            + self.capture(self.re_float)
-                            + r' eV$',
-                            dtype=np.float64,
-                        ),
-                        Quantity(
-                            'total_energy_extrapolation',
-                            r'Total energy, T -> 0'
-                            + self.re_non_greedy
-                            + self.capture(self.re_float)
-                            + r' eV',
-                            dtype=np.float64,
-                        ),
-                        Quantity(
-                            'free_energy',
-                            r'Electronic free energy'
-                            + self.re_non_greedy
-                            + self.capture(self.re_float)
-                            + r' eV$',
-                            dtype=np.float64,
-                        ),
-                    ]
-                ),
+                'positions',
+                rf'({RE_FLOAT})\s+({RE_FLOAT})\s+({RE_FLOAT}) *{RE_N}',
+                dtype=np.dtype(np.float64),
+                repeats=True,
             ),
             Quantity(
-                'scf_convergence',  # format 2
-                r'SCF\s\d+ :([\S\s]+)$',  # ! handle warnings
-                split_on=r'\|',
-                repeats={
-                    2: 'density',
-                    3: 'eigen_energy',
-                    4: 'total_energy',
-                    5: 'total_forces',
-                },
+                'positions',
+                rf'atom +({RE_FLOAT})\s+({RE_FLOAT})\s+({RE_FLOAT})',
+                dtype=np.dtype(np.float64),
+                repeats=True,
+            ),
+            Quantity(
+                'velocities',
+                rf'velocity\s+({RE_FLOAT})\s+({RE_FLOAT})\s+({RE_FLOAT})',
+                dtype=np.dtype(np.float64),
+                repeats=True,
             ),
         ]
 
-        ion_output = [
+        eigenvalues = Quantity(
+            'eigenvalues',
+            rf'Writing Kohn\-Sham eigenvalues\.([\s\S]+?State[\s\S]+?)(?:{RE_N}{RE_N} +[A-RT-Z])',
+            repeats=True,
+            sub_parser=TextParser(
+                quantities=[
+                    Quantity(
+                        'kpoints',
+                        rf'{RE_N} *K-point:\s*\d+ at\s*({RE_FLOAT})\s*({RE_FLOAT})\s*({RE_FLOAT})',
+                        dtype=float,
+                        repeats=True,
+                    ),
+                    Quantity(
+                        'occupation_eigenvalue',
+                        rf'{RE_N} *\d+\s*({RE_FLOAT})\s*({RE_FLOAT})\s*{RE_FLOAT}',
+                        repeats=True,
+                    ),
+                ]
+            ),
+        )
+
+        date_time = Quantity(
+            'date_time',
+            rf'Date\s*:\s*(\d+), Time\s*:\s*([\d\.]+)\s*',
+            repeats=False,
+            convert=False,
+            str_operation=lambda x: datetime.strptime(
+                x, '%Y%m%d %H%M%S.%f'
+            ).timestamp(),
+        )
+
+        scf_quantities = [
+            # TODO add section_eigenvalues to scf_iteration
+            date_time,
+            eigenvalues,
             Quantity(
                 'energy_components',
-                r'Start decomposition of the XC Energy'
-                + self.capture(self.re_non_greedy)
-                + r'End decomposition of the XC Energy',
-                sub_parser=TextParser(
-                    quantities=[
-                        Quantity(
-                            'hartree',
-                            r'Hartree-Fock part'
-                            + self.re_non_greedy
-                            + self.capture(self.re_float)
-                            + r' eV$',
-                            dtype=np.float64,
-                        ),
-                        Quantity(
-                            'x',
-                            r'X Energy'
-                            + self.re_non_greedy
-                            + self.capture(self.re_float)
-                            + r' eV$',
-                            dtype=np.float64,
-                        ),
-                        Quantity(
-                            'gga_c',
-                            r'C Energy GGA'
-                            + self.re_non_greedy
-                            + self.capture(self.re_float)
-                            + r' eV$',
-                            dtype=np.float64,
-                        ),
-                        Quantity(
-                            'xc_energy',
-                            r'Total XC Energy'
-                            + self.re_non_greedy
-                            + self.capture(self.re_float)
-                            + r' eV$',
-                            dtype=np.float64,
-                        ),
-                        Quantity(
-                            'lda_x',
-                            r'X Energy LDA'
-                            + self.re_non_greedy
-                            + self.capture(self.re_float)
-                            + r' eV$',
-                            dtype=np.float64,
-                        ),
-                        Quantity(
-                            'lda_c',
-                            r'C Energy LDA'
-                            + self.re_non_greedy
-                            + self.capture(self.re_float)
-                            + r' eV$',
-                            dtype=np.float64,
-                        ),
-                    ]
-                ),
+                rf'{RE_N} *Total energy components:([\s\S]+?)((?:{RE_N}{RE_N}|\| Electronic free energy per atom\s*:\s*[Ee\d\.\-]+ eV))',
+                repeats=False,
+                str_operation=str_to_energy_components,
+                convert=False,
             ),
-        ]
-
-        workflows = [
             Quantity(
-                Program.version,
-                r'(?:Version|FHI\-aims version)\s*\:*\s*([\d\.]+)\s*',
+                'forces',
+                rf'{RE_N} *Total forces\([\s\d]+\)\s*:([\s\d\.\-\+Ee]+){RE_N}',
+                repeats=True,
+            ),
+            Quantity(
+                'stress_tensor',
+                rf'{RE_N} *Sum of all contributions\s*:\s*([\d\.\-\+Ee ]+{RE_N})',
                 repeats=False,
             ),
+            Quantity('pressure', r' *\|\s*Pressure:\s*([\d\.\-\+Ee ]+)', repeats=False),
             Quantity(
-                'compilation',
-                r'Compiled on (\d+) at (\d+\:\d+\:\d+) on host (\S+)\.$',
-                repeats={
-                    1: 'date',
-                    2: 'time',
-                    3: Program.compilation_host,
-                },  # modify this to use Quantity, but shallow
+                'scf_convergence',
+                rf'{RE_N} *Self-consistency convergence accuracy:([\s\S]+?)(\| Change of total energy\s*:\s*[\d\.\-\+Ee V]+)',
+                repeats=False,
+                str_operation=str_to_scf_convergence,
+                convert=False,
             ),
             Quantity(
-                'ion_step',
-                r'Begin self-consistency loop:'
-                + self.capture(self.re_non_greedy)
-                + r'Writing the current geometry to file|'
-                + self.re_sep_long,
-                repeats=True,
-                sub_parser=TextParser(
-                    quantities=[
-                        ion_output,
-                        Quantity(
-                            'scf_step',
-                            r'Begin self-consistency iteration|Convergence:'
-                            + self.capture(self.re_non_greedy)
-                            + self.re_sep_short
-                            + self.re_blank_line
-                            + self.re_sep_short,
-                            repeats=True,
-                            sub_parser=TextParser(
-                                quantities=[geometry_description, scf_output]
-                            ),
-                        ),
-                    ]
-                ),
+                'humo',
+                r'Highest occupied state \(VBM\) at\s*([\d\.\-\+Ee ]+) (?P<__unit>\w+)',
+                repeats=False,
+                dtype=float,
+            ),
+            Quantity(
+                'lumo',
+                r'Lowest unoccupied state \(CBM\) at\s*([\d\.\-\+Ee ]+) (?P<__unit>\w+)',
+                repeats=False,
+                dtype=float,
+            ),
+            Quantity(
+                'fermi_level',  # older version
+                rf'{RE_N} *\| Chemical potential \(Fermi level\) in (\w+)\s*:([\d\.\-\+Ee ]+)',
+                str_operation=lambda x: float(x.split()[1])
+                * units_mapping.get(x.split()[0]),
+            ),
+            Quantity(
+                'fermi_level',  # newer version
+                rf'{RE_N} *\| Chemical potential \(Fermi level\)\:\s*([\-\d\.]+)\s*(\w+)',
+                str_operation=lambda x: float(x.split()[0])
+                * units_mapping.get(x.split()[1], 1),
+            ),
+            Quantity(
+                'time_calculation',
+                r'Time for this iteration +: +[\d\.]+ s +([\d\.]+) s',
+                dtype=float,
             ),
         ]
 
-        # old quantities
+        def str_to_scf_convergence2(val_in):
+            val = val_in.split('|')
+            if len(val) != 7:
+                return
+            energy = float(val[3]) * ureg.eV
+            return {'Change of total energy': energy}
+
+        def str_to_hirshfeld(val_in):
+            val = [v.strip() for v in val_in.strip().splitlines()]
+            data = dict(atom=val[0])
+            for v in val[1:]:
+                if v.startswith('|'):
+                    v = v.strip(' |').split(':')
+                    if v[0][0].isalpha():
+                        key = v[0].strip()
+                        data[key] = []
+                    data[key].extend([float(vi) for vi in v[-1].split()])
+            return data
+
+        def str_to_frequency(val_in):
+            val = val_in.strip().split()
+            return [int(val[0]), float(val[1])]
+
+        def str_to_gw_eigs(val_in):
+            val = [v.split() for v in val_in.splitlines()]
+            keys = val[0]
+            data = []
+            for v in val[1:]:
+                if len(keys) == len(v) and v[0].isdecimal():
+                    data.append(v)
+            data = np.array(data, dtype=float)
+            data = np.transpose(data)
+            res = {keys[i]: data[i] for i in range(len(data))}
+            return res
+
+        def str_to_gw_scf(val_in):
+            val = [v.split(':') for v in val_in.splitlines()]
+            data = {}
+            for v in val:
+                if len(v) == 2:
+                    data[v[0].strip(' |')] = float(v[1].split()[0]) * ureg.eV
+                if 'Fit accuracy for G' in v[0]:
+                    data['Fit accuracy for G(w)'] = float(v[0].split()[-1])
+            return data
+
+        def str_to_md_calculation_info(val_in):
+            val = [v.strip() for v in val_in.strip().splitlines()]
+            res = dict()
+            for v in val:
+                v = v.lstrip(' |').strip().split(':')
+                if len(v) < 2 or not v[1]:
+                    continue
+                vi = v[1].split()
+                if not vi[0][-1].isdecimal():
+                    continue
+                elif len(vi) < 2:
+                    res[v[0].strip()] = float(vi[0])
+                else:
+                    unit = units_mapping.get(vi[1], None)
+                    res[v[0].strip()] = (
+                        float(vi[0]) * unit if unit is not None else float(vi[0])
+                    )
+            return res
+
+        def str_to_quantity(val_in):
+            val = val_in.split()
+            if len(val) == 1:
+                return float(val[0])
+            elif len(val) == 2:
+                return float(val[0]) * ureg(val[1])
+            else:
+                return None
+
+        def str_to_ureg(val_in):
+            try:
+                val = ureg(val_in.replace('^', '**'))
+            except Exception:
+                self.logger.warning(
+                    rf'Problem parsing some units from .out file, could not convert.',
+                    details={'value': val_in},
+                )
+                val = None
+            return val
+
+        def str_to_md_control_in(val_in):
+            val = val_in.split()
+            return {val[0]: ' '.join(val[1:])}
 
         calculation_quantities = [
             Quantity(
+                'self_consistency',
+                r'Begin self\-consistency iteration #\s*\d+([\s\S]+?Total energy evaluation[s:\d\. ]+)',
+                repeats=True,
+                sub_parser=TextParser(quantities=scf_quantities),
+            ),
+            # different format for scf loop
+            Quantity(
+                'self_consistency',
+                rf'{RE_N} *SCF\s*\d+\s*:([ \|\-\+Ee\d\.s]+)',
+                repeats=True,
+                sub_parser=TextParser(
+                    quantities=[
+                        Quantity(
+                            'scf_convergence',
+                            r'([\s\S]+)',
+                            str_operation=str_to_scf_convergence2,
+                            repeats=False,
+                            convert=False,
+                        )
+                    ]
+                ),
+            ),
+            Quantity(
                 'structure',
-                rf'Atomic structure(.|\n)*\| *Atom *x \[A\] *y \[A\] *z \[A\]([\s\S]+?Species[\s\S]+?(?:{self.re_n} *{self.re_n}| 1\: ))',
+                rf'Atomic structure(.|\n)*\| *Atom *x \[A\] *y \[A\] *z \[A\]([\s\S]+?Species[\s\S]+?(?:{RE_N} *{RE_N}| 1\: ))',
                 repeats=False,
                 convert=False,
                 sub_parser=TextParser(quantities=structure_quantities),
             ),
             Quantity(
                 'structure',
-                rf'{self.re_n} *(atom +{self.re_float}[\s\S]+?(?:{self.re_n} *{self.re_n}|\-\-\-))',
+                rf'{RE_N} *(atom +{RE_FLOAT}[\s\S]+?(?:{RE_N} *{RE_N}|\-\-\-))',
                 repeats=False,
                 convert=False,
                 sub_parser=TextParser(quantities=structure_quantities),
             ),
             Quantity(  # This quantity is double defined in self._quantities
                 'lattice_vectors',
-                rf'{self.re_n} *lattice_vector([\d\.\- ]+){self.re_n} *lattice_vector([\d\.\- ]+){self.re_n} *lattice_vector([\d\.\- ]+)',
+                rf'{RE_N} *lattice_vector([\d\.\- ]+){RE_N} *lattice_vector([\d\.\- ]+){RE_N} *lattice_vector([\d\.\- ]+)',
                 unit='angstrom',
                 repeats=False,
                 shape=(3, 3),
@@ -525,7 +402,7 @@ class FHIAimsOutParser(TextParser):
             ),
             Quantity(
                 'energy',
-                rf'{self.re_n} *Energy and forces in a compact form:([\s\S]+?(?:{self.re_n}{self.re_n}|Electronic free energy\s*:\s*[\d\.\-Ee]+ eV))',
+                rf'{RE_N} *Energy and forces in a compact form:([\s\S]+?(?:{RE_N}{RE_N}|Electronic free energy\s*:\s*[\d\.\-Ee]+ eV))',
                 str_operation=str_to_energy_components,
                 repeats=False,
                 convert=False,
@@ -534,8 +411,23 @@ class FHIAimsOutParser(TextParser):
             # same format as in scf iteration, they are printed also in initialization
             # so we should get last occurence
             Quantity(
+                'energy_components',
+                rf'{RE_N} *Total energy components:([\s\S]+?)((?:{RE_N}{RE_N}|\| Electronic free energy per atom\s*:\s*[\d\.\-Ee]+ eV))',
+                repeats=True,
+                str_operation=str_to_energy_components,
+                convert=False,
+            ),
+            Quantity(
+                'energy_xc',
+                rf'{RE_N} *Start decomposition of the XC Energy([\s\S]+?)End decomposition of the XC Energy',
+                str_operation=str_to_energy_components,
+                repeats=False,
+                convert=False,
+            ),
+            eigenvalues,
+            Quantity(
                 'forces',
-                rf'{self.re_n} *Total atomic forces.*?\[eV/Ang\]:\s*([\d\.Ee\-\+\s\|]+)',
+                rf'{RE_N} *Total atomic forces.*?\[eV/Ang\]:\s*([\d\.Ee\-\+\s\|]+)',
                 str_operation=str_to_atomic_forces,
                 repeats=False,
                 convert=False,
@@ -543,13 +435,13 @@ class FHIAimsOutParser(TextParser):
             # TODO no metainfo for scf forces but old parser put it in atom_forces_free_raw
             Quantity(
                 'forces_raw',
-                rf'{self.re_n} *Total forces\([\s\d]+\)\s*:([\s\d\.\-\+Ee]+){self.re_n}',
+                rf'{RE_N} *Total forces\([\s\d]+\)\s*:([\s\d\.\-\+Ee]+){RE_N}',
                 repeats=True,
                 dtype=float,
             ),
             Quantity(
                 'time_calculation',
-                rf'{self.re_n} *\| Time for this force evaluation\s*:\s*[\d\.]+ s\s*([\d\.]+) s',
+                rf'{RE_N} *\| Time for this force evaluation\s*:\s*[\d\.]+ s\s*([\d\.]+) s',
                 repeats=False,
                 dtype=float,
             ),
@@ -576,7 +468,7 @@ class FHIAimsOutParser(TextParser):
             ),
             Quantity(
                 'vdW_TS',
-                rf'(Evaluating non\-empirical van der Waals correction[\s\S]+?)(?:\|\s*Converged\.|\-{5}{self.re_n}{self.re_n})',
+                rf'(Evaluating non\-empirical van der Waals correction[\s\S]+?)(?:\|\s*Converged\.|\-{5}{RE_N}{RE_N})',
                 repeats=False,
                 sub_parser=TextParser(
                     quantities=[
@@ -615,28 +507,28 @@ class FHIAimsOutParser(TextParser):
             ),
             Quantity(
                 'md_timestep',
-                rf'{self.re_n} *Molecular dynamics time step\s*=\s*({self.re_float} [A-Za-z]*)\s*{self.re_n}',
+                rf'{RE_N} *Molecular dynamics time step\s*=\s*({RE_FLOAT} [A-Za-z]*)\s*{RE_N}',
                 str_operation=str_to_quantity,
                 repeats=False,
                 convert=False,
             ),
             Quantity(
                 'md_simulation_time',
-                rf'{self.re_n} *\| *simulation time\s*=\s*({self.re_float} [A-Za-z]*)\s*{self.re_n}',
+                rf'{RE_N} *\| *simulation time\s*=\s*({RE_FLOAT} [A-Za-z]*)\s*{RE_N}',
                 str_operation=str_to_quantity,
                 repeats=False,
                 convert=False,
             ),
             Quantity(
                 'md_temperature',
-                rf'{self.re_n} *\| *at temperature\s*=\s*({self.re_float} [A-Za-z]*)\s*{self.re_n}',
+                rf'{RE_N} *\| *at temperature\s*=\s*({RE_FLOAT} [A-Za-z]*)\s*{RE_N}',
                 str_operation=str_to_quantity,
                 repeats=False,
                 convert=False,
             ),
             Quantity(
                 'md_thermostat_mass',
-                rf'{self.re_n} *\| *thermostat effective mass\s*=\s*({self.re_float})\s*{self.re_n}',
+                rf'{RE_N} *\| *thermostat effective mass\s*=\s*({RE_FLOAT})\s*{RE_N}',
                 str_operation=str_to_quantity,
                 repeats=False,
                 convert=False,
@@ -650,30 +542,30 @@ class FHIAimsOutParser(TextParser):
             ),
             Quantity(
                 'md_calculation_info',
-                rf'{self.re_n} *Advancing structure using Born-Oppenheimer Molecular Dynamics:\s*{self.re_n}'
+                rf'{RE_N} *Advancing structure using Born-Oppenheimer Molecular Dynamics:\s*{RE_N}'
                 rf' *Complete information for previous time-step:'
-                rf'([\s\S]+?)((?:{self.re_n}{self.re_n}|\| Nose-Hoover Hamiltonian\s*:\s*[Ee\d\.\-\+]+ eV))',
+                rf'([\s\S]+?)((?:{RE_N}{RE_N}|\| Nose-Hoover Hamiltonian\s*:\s*[Ee\d\.\-\+]+ eV))',
                 str_operation=str_to_md_calculation_info,
                 repeats=False,
                 convert=False,
             ),
             Quantity(
                 'md_system_info',
-                rf'Atomic structure.*as used in the preceding time step:\s*{self.re_n}'
-                rf'([\s\S]+?)((?:{self.re_n}{self.re_n}|\s*Begin self-consistency loop))',
+                rf'Atomic structure.*as used in the preceding time step:\s*{RE_N}'
+                rf'([\s\S]+?)((?:{RE_N}{RE_N}|\s*Begin self-consistency loop))',
                 repeats=False,
                 convert=False,
                 sub_parser=TextParser(
                     quantities=[
                         Quantity(
                             'positions',
-                            rf'atom +({self.re_float})\s+({self.re_float})\s+({self.re_float})',
+                            rf'atom +({RE_FLOAT})\s+({RE_FLOAT})\s+({RE_FLOAT})',
                             dtype=np.dtype(np.float64),
                             repeats=True,
                         ),
                         Quantity(
                             'velocities',
-                            rf'velocity\s+({self.re_float})\s+({self.re_float})\s+({self.re_float})',
+                            rf'velocity\s+({RE_FLOAT})\s+({RE_FLOAT})\s+({RE_FLOAT})',
                             dtype=np.dtype(np.float64),
                             repeats=True,
                         ),
@@ -694,24 +586,47 @@ class FHIAimsOutParser(TextParser):
 
         self._quantities = [
             Quantity(
-                TimeRun.wall_start,
+                'version',
+                r'(?:Version|FHI\-aims version)\s*\:*\s*([\d\.]+)\s*',
+                repeats=False,
+            ),
+            Quantity(
+                'program_compilation_date',
+                r'Compiled on ([\d\/]+)',
+                repeats=False,
+            ),
+            Quantity(
+                'program_compilation_time',
+                r'at (\d+\:\d+\:\d+)',
+                repeats=False,
+            ),
+            Quantity('compilation_host', r'on host ([\w\.\-]+)', repeats=False),
+            date_time,
+            Quantity(
+                'cpu1_start',
+                r'Time zero on CPU 1\s*:\s*([0-9\-E\.]+)\s*(?P<__unit>\w+)\.',
+                repeats=False,
+                dtype=float,
+            ),
+            Quantity(
+                'wall_start',
                 r'Internal wall clock time zero\s*:\s*([0-9\-E\.]+)\s*(?P<__unit>\w+)\.',
                 repeats=False,
                 dtype=float,
             ),
-            Quantity(Run.raw_id, r'aims_uuid\s*:\s*([\w\-]+)', repeats=False),
+            Quantity('raw_id', r'aims_uuid\s*:\s*([\w\-]+)', repeats=False),
             Quantity(
-                xsection_run.x_fhi_aims_number_of_tasks,
+                'x_fhi_aims_number_of_tasks',
                 r'Using\s*(\d+)\s*parallel tasks',
                 repeats=False,
             ),
             Quantity(
-                x_fhi_aims_section_parallel_task_assignement.x_fhi_aims_parallel_task_nr,
+                'parallel_task_nr',
                 r'Task\s*(\d+)\s*on host',
                 repeats=True,
             ),
             Quantity(
-                x_fhi_aims_section_parallel_task_assignement.x_fhi_aims_parallel_task_host,
+                'parallel_task_host',
                 r'Task\s*\d+\s*on host\s*([\s\S]+?)reporting',
                 repeats=True,
                 flatten=False,
@@ -729,61 +644,64 @@ class FHIAimsOutParser(TextParser):
                 convert=False,
             ),
             Quantity(
-                xsection_method.x_fhi_aims_controlInOut_hse_unit,
+                'controlInOut_hse_unit',
                 r'hse_unit: Unit for the HSE06 hybrid functional screening parameter set to\s*(\w)',
-                str_operation=FHIAimsControlParser.str_to_unit,
+                str_operation=str_to_unit,
                 repeats=False,
             ),
             Quantity(
-                xsection_method.x_fhi_aims_controlInOut_hybrid_xc_coeff,
+                'controlInOut_hybrid_xc_coeff',
                 r'hybrid_xc_coeff: Mixing coefficient for hybrid-functional exact exchange modified to\s*([\d\.]+)',
                 repeats=False,
                 dtype=float,
             ),
             Quantity(
-                'k_grid', rf'{self.re_n} *Found k-point grid:\s*([\d ]+)', repeats=False
+                'k_grid', rf'{RE_N} *Found k-point grid:\s*([\d ]+)', repeats=False
             ),  # taken from tests/data/fhi_aims
             Quantity(
-                xsection_run.x_fhi_aims_controlInOut_MD_time_step,
-                rf'{self.re_n} *Molecular dynamics time step\s*=\s*([\d\.]+)\s*(?P<__unit>[\w]+)',
+                'controlInOut_MD_time_step',
+                rf'{RE_N} *Molecular dynamics time step\s*=\s*([\d\.]+)\s*(?P<__unit>[\w]+)',
                 repeats=False,
             ),
             Quantity(
-                xsection_method.x_fhi_aims_controlInOut_relativistic,
-                rf'{self.re_n} *Scalar relativistic treatment of kinetic energy:\s*([\w\- ]+)',
+                'controlInOut_relativistic',
+                rf'{RE_N} *Scalar relativistic treatment of kinetic energy:\s*([\w\- ]+)',
                 repeats=False,
             ),
             Quantity(
-                xsection_method.x_fhi_aims_controlInOut_relativistic,
-                rf'{self.re_n} *(Non-relativistic) treatment of kinetic energy',
+                'controlInOut_relativistic',
+                rf'{RE_N} *(Non-relativistic) treatment of kinetic energy',
                 repeats=False,
             ),
             Quantity(
-                xsection_method.x_fhi_aims_controlInOut_relativistic_threshold,
-                rf'{self.re_n} *Threshold value for ZORA:\s*([\d\.Ee\-\+])',
+                'controlInOut_relativistic_threshold',
+                rf'{RE_N} *Threshold value for ZORA:\s*([\d\.Ee\-\+])',
                 repeats=False,
             ),
             Quantity(
-                xsection_method.x_fhi_aims_controlInOut_xc,
-                rf'{self.re_n} *XC:\s*(?:Using)*\s*([\w\- ]+) with OMEGA =\s*([\d\.Ee\-\+]+)',
+                'controlInOut_xc',
+                rf'{RE_N} *XC:\s*(?:Using)*\s*([\w\- ]+) with OMEGA =\s*([\d\.Ee\-\+]+)',
                 repeats=False,
                 dtype=None,
+                flatten=False,
             ),
             Quantity(
                 'petukhov',
-                rf'{self.re_n} *Fixing petukhov mixing factor to\s+(\d?\.[\d]+)',
+                rf'{RE_N} *Fixing petukhov mixing factor to\s+(\d?\.[\d]+)',
                 repeats=False,
                 dtype=np.dtype(np.float64),
             ),
             Quantity(
-                xsection_method.x_fhi_aims_controlInOut_xc,
+                'controlInOut_xc',
                 r'XC: (?:Running|Using) ([\-\w \(\) ]+)',
                 repeats=False,
+                flatten=False,
             ),
             Quantity(
-                xsection_method.x_fhi_aims_controlInOut_xc,
-                rf'{self.re_n} *(Hartree-Fock) calculation starts \.\.\.',
+                'controlInOut_xc',
+                rf'{RE_N} *(Hartree-Fock) calculation starts \.\.\.',
                 repeats=False,
+                flatten=False,
             ),
             Quantity(
                 'band_segment_points',
@@ -792,13 +710,13 @@ class FHIAimsOutParser(TextParser):
             ),
             Quantity(
                 'species',
-                rf'(Reading configuration options for species [\s\S]+?)(?:{self.re_n} *Finished|{self.re_n} *{self.re_n})',
+                rf'(Reading configuration options for species [\s\S]+?)(?:{RE_N} *Finished|{RE_N} *{RE_N})',
                 str_operation=str_to_species_in,
                 repeats=False,
             ),
             Quantity(
                 'control_inout',
-                rf'{self.re_n} *Reading file control\.in\.\s*\-*\s*([\s\S]+?)'
+                rf'{RE_N} *Reading file control\.in\.\s*\-*\s*([\s\S]+?)'
                 r'(?:Finished reading input file \'control\.in\'|Input file control\.in ends\.)',
                 repeats=False,
                 sub_parser=TextParser(
@@ -815,13 +733,13 @@ class FHIAimsOutParser(TextParser):
             ),
             Quantity(
                 'control_in_verbatim',
-                rf'{self.re_n}  *Parsing control\.in([\S\s]*)Completed first pass over input file control\.in',
+                rf'{RE_N}  *Parsing control\.in([\S\s]*)Completed first pass over input file control\.in',
                 repeats=False,
                 sub_parser=TextParser(
                     quantities=[
                         Quantity(
                             'md_controlin',
-                            rf' *([\_a-zA-Z\d\-]*MD[\_a-zA-Z\d\-]*)\s+([a-zA-Z\d\.\-\_\^]+.*){self.re_n}',
+                            rf' *([\_a-zA-Z\d\-]*MD[\_a-zA-Z\d\-]*)\s+([a-zA-Z\d\.\-\_\^]+.*){RE_N}',
                             str_operation=str_to_md_control_in,
                             repeats=True,
                             convert=False,
@@ -831,27 +749,25 @@ class FHIAimsOutParser(TextParser):
             ),
             # GW input quantities
             Quantity('gw_flag', self._re_gw_flag, repeats=False),
-            Quantity(
-                'anacon_type', rf'{self.re_n}\s*anacon_type\s*(\d+)', repeats=False
-            ),
+            Quantity('anacon_type', rf'{RE_N}\s*anacon_type\s*(\d+)', repeats=False),
             Quantity(
                 'gw_analytical_continuation',
-                rf'{self.re_n} (?:Using)*\s*([\w\-\s]+) for analytical continuation',
+                rf'{RE_N} (?:Using)*\s*([\w\-\s]+) for analytical continuation',
                 repeats=False,
                 flatten=True,
                 str_operation=lambda x: [
                     y.lower() for v in x.split(' ') for y in v.split('-')
                 ],
             ),
-            Quantity('k_grid', rf'{self.re_n} *k\_grid\s*([\d ]+)', repeats=False),
+            Quantity('k_grid', rf'{RE_N} *k\_grid\s*([\d ]+)', repeats=False),
             Quantity(
                 'freq_grid_type',
-                rf'{self.re_n}\s*Initialising([\w\-\s]+)time and frequency grids',
+                rf'{RE_N}\s*Initialising([\w\-\s]+)time and frequency grids',
                 repeats=False,
             ),
             Quantity(
                 'n_freq',
-                rf'{self.re_n}\s*frequency_points\s*(\d+)',
+                rf'{RE_N}\s*frequency_points\s*(\d+)',
                 repeats=False,
                 dtype=int,
             ),
@@ -863,7 +779,7 @@ class FHIAimsOutParser(TextParser):
             ),
             Quantity(
                 'frozen_core',
-                rf'{self.re_n}\s*frozen_core_scf\s*(\d+)',
+                rf'{RE_N}\s*frozen_core_scf\s*(\d+)',
                 repeats=False,
                 dtype=int,
             ),
@@ -899,7 +815,7 @@ class FHIAimsOutParser(TextParser):
             ),
             Quantity(
                 'structure',
-                rf'Atomic structure(.|\n)*\| *Atom *x \[A\] *y \[A\] *z \[A\]([\s\S]+?Species[\s\S]+?(?:{self.re_n} *{self.re_n}| 1\: ))',
+                rf'Atomic structure(.|\n)*\| *Atom *x \[A\] *y \[A\] *z \[A\]([\s\S]+?Species[\s\S]+?(?:{RE_N} *{RE_N}| 1\: ))',
                 repeats=False,
                 convert=False,
                 sub_parser=TextParser(quantities=structure_quantities),
@@ -921,14 +837,14 @@ class FHIAimsOutParser(TextParser):
             ),
             Quantity(
                 'geometry_optimization',
-                rf'{self.re_n} *Geometry optimization: Attempting to predict improved coordinates\.'
+                rf'{RE_N} *Geometry optimization: Attempting to predict improved coordinates\.'
                 rf'([\s\S]+?(?:{tail}))',
                 repeats=True,
                 sub_parser=TextParser(quantities=calculation_quantities),
             ),
             Quantity(
                 'molecular_dynamics',
-                rf'{self.re_n} *Molecular dynamics: Attempting to update all nuclear coordinates\.'
+                rf'{RE_N} *Molecular dynamics: Attempting to update all nuclear coordinates\.'
                 rf'([\s\S]+?(?:{tail}))',
                 repeats=True,
                 sub_parser=TextParser(
@@ -955,14 +871,3 @@ class FHIAimsOutParser(TextParser):
     def get_number_of_spin_channels(self):
         return self.get('array_size_parameters', {}).get('Number of spin channels', 1)
 
-
-class MyParser(MatchingParser):
-    def parse(
-        self,
-        mainfile: str,
-        archive: 'EntryArchive',
-        logger: 'BoundLogger',
-        child_archives: dict[str, 'EntryArchive'] = None,
-    ) -> None:
-        logger.info('MyParser.parse', parameter=configuration.parameter)
-        archive.results = Results(material=Material(elements=['H', 'O']))
