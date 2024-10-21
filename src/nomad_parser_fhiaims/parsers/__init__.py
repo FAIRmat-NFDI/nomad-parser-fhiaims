@@ -1,18 +1,21 @@
 from nomad.config.models.plugins import ParserEntryPoint
-from pydantic import Field
 
 
-class MyParserEntryPoint(ParserEntryPoint):
-    parameter: int = Field(0, description='Custom configuration parameter')
+class EntryPoint(ParserEntryPoint):
 
     def load(self):
-        from nomad_parser_fhiaims.parsers.myparser import MyParser
+        from nomad.parsing.parser import MatchingParserInterface
 
-        return MyParser(**self.dict())
+        return MatchingParserInterface(
+            parser_class_name='nomad_parser_fhiaims.parsers.parser.FHIAimsParser',
+            **self.dict(),
+        )
 
 
-myparser = MyParserEntryPoint(
-    name='MyParser',
-    description='Parser defined using the new plugin mechanism.',
-    mainfile_name_re='.*\.myparser',
+parser_entry_point = EntryPoint(
+    name='parsers/fhiaims',
+    aliases=['parsers/fhi-aims', 'parsers/fhiaims'],
+    description='NOMAD parser for FHIAIMS.',
+    python_package='nomad_parser_fhiaims',
+    mainfile_contents_re=r'^(.*\n)*?\s*Invoking FHI-aims \.\.\.',
 )
