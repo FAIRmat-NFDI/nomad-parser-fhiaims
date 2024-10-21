@@ -33,8 +33,10 @@ def str_to_unit(val_in):
 
 
 class FHIAimsOutParser(TextParser):
+    # used olso in main parser
+    _re_gw_flag = rf'{RE_N}\s*(?:qpe_calc|sc_self_energy)\s*([\w]+)'
+
     def __init__(self):
-        self._re_gw_flag = rf'{RE_N}\s*(?:qpe_calc|sc_self_energy)\s*([\w]+)'
         super().__init__(None)
 
     def init_quantities(self):
@@ -748,7 +750,7 @@ class FHIAimsOutParser(TextParser):
                 ),
             ),
             # GW input quantities
-            Quantity('gw_flag', self._re_gw_flag, repeats=False),
+            Quantity('gw_flag', FHIAimsOutParser._re_gw_flag, repeats=False),
             Quantity('anacon_type', rf'{RE_N}\s*anacon_type\s*(\d+)', repeats=False),
             Quantity(
                 'gw_analytical_continuation',

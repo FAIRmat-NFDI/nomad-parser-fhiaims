@@ -22,6 +22,8 @@ configuration = config.get_plugin_entry_point(
 m_package = SchemaPackage()
 
 TEXT_ANNOTATION_KEY = 'text'
+TEXT_GW_ANNOTATION_KEY = 'text_gw'
+TEXT_GW_WORKFLOW_ANNOTATION_KEY = 'text_gw_workflow'
 
 class Program(general.Program):
 
@@ -35,6 +37,11 @@ class XCFunctional(model_method.XCFunctional):
 class DFT(model_method.DFT):
 
     model_method.DFT.xc_functionals.m_annotations[TEXT_ANNOTATION_KEY] = MappingAnnotationModel(mapper=('get_xc_functionals', ['.controlInOut_xc']))
+
+
+class GW(model_method.GW):
+
+    model_method.GW.type.m_annotations[TEXT_GW_ANNOTATION_KEY] = MappingAnnotationModel(mapper=('get_gw_flag', ['.gw_flag']))
 
 
 class AtomicCell(model_system.AtomicCell):
@@ -58,25 +65,39 @@ class TotalEnergy(properties.energies.TotalEnergy):
 
     properties.energies.TotalEnergy.value.m_annotations[TEXT_ANNOTATION_KEY] = MappingAnnotationModel(mapper='.value')
 
-    properties.energies.TotalEnergy.contributions.m_annotations[TEXT_ANNOTATION_KEY] = MappingAnnotationModel(mapper='.contributions')
+    properties.energies.TotalEnergy.contributions.m_annotations[TEXT_ANNOTATION_KEY] = MappingAnnotationModel(mapper='.components')
+
+
+class TotalForce(properties.forces.TotalForce):
+
+    properties.forces.TotalForce.value.m_annotations[TEXT_ANNOTATION_KEY] = MappingAnnotationModel(mapper='.forces')
 
 
 class Outputs(outputs.Outputs):
 
     outputs.Outputs.total_energies.m_annotations[TEXT_ANNOTATION_KEY] = MappingAnnotationModel(mapper=('get_energies', ['.@']))
 
+    outputs.Outputs.total_forces.m_annotations[TEXT_ANNOTATION_KEY] = MappingAnnotationModel(mapper='.@')
+
 
 class Simulation(general.Simulation):
+
     general.Simulation.program.m_annotations[TEXT_ANNOTATION_KEY] = MappingAnnotationModel(mapper='.@')
 
     model_method.DFT.m_def.m_annotations[TEXT_ANNOTATION_KEY] = MappingAnnotationModel(mapper='.@')
 
+    model_method.GW.m_def.m_annotations[TEXT_GW_ANNOTATION_KEY] = MappingAnnotationModel(mapper='.@')
+
     general.Simulation.model_system.m_annotations[TEXT_ANNOTATION_KEY] = MappingAnnotationModel(mapper=('get_sections', ['.@'], dict(include=['lattice_vectors', 'structure'])))
 
-    general.Simulation.outputs.m_annotations[TEXT_ANNOTATION_KEY] = MappingAnnotationModel(mapper=('get_sections', ['.@'], dict(include=['energy', 'energy_components'])))
+    general.Simulation.outputs.m_annotations[TEXT_ANNOTATION_KEY] = MappingAnnotationModel(mapper=('get_sections', ['.@'], dict(include=['energy', 'energy_components', 'forces'])))
 
 
 Simulation.m_def.m_annotations[TEXT_ANNOTATION_KEY] = MappingAnnotationModel(mapper='@')
+
+Simulation.m_def.m_annotations[TEXT_GW_ANNOTATION_KEY] = MappingAnnotationModel(mapper='@')
+
+Simulation.m_def.m_annotations[TEXT_GW_WORKFLOW_ANNOTATION_KEY] = MappingAnnotationModel(mapper='@')
 
 
 m_package.__init_metainfo__()
