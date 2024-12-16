@@ -7,7 +7,7 @@ class MySchemaPackageEntryPoint(SchemaPackageEntryPoint):
 
     def load(self):
         from nomad_parser_fhiaims.schema_packages.schema_package import m_package
- 
+
         return m_package
 
 

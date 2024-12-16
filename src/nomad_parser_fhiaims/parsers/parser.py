@@ -1,6 +1,4 @@
-from typing import (
-    TYPE_CHECKING, List, Dict, Any
-)
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nomad.datamodel.datamodel import (
@@ -10,13 +8,28 @@ if TYPE_CHECKING:
         BoundLogger,
     )
 
+import os
 import re
-from nomad.config import config
-from nomad.parsing.file_parser.mapping_parser import TextParser as TextMappingParser, MetainfoParser
-from nomad_parser_fhiaims.parsers.out_parser import FHIAimsOutParser as FHIAimsOutTextParser
-from nomad_parser_fhiaims.schema_packages.schema_package import Simulation, TEXT_ANNOTATION_KEY, TEXT_GW_ANNOTATION_KEY, TEXT_GW_WORKFLOW_ANNOTATION_KEY
 
+import numpy as np
+from nomad.parsing.file_parser.mapping_parser import (
+    MetainfoParser,
+)
+from nomad.parsing.file_parser.mapping_parser import (
+    TextParser as TextMappingParser,
+)
 from nomad_simulations.schema_packages.general import Program
+
+from nomad_parser_fhiaims.parsers.out_parser import (
+    FHIAimsOutParser as FHIAimsOutTextParser,
+)
+from nomad_parser_fhiaims.schema_packages.schema_package import (
+    TEXT_ANNOTATION_KEY,
+    TEXT_DOS_ANNOTATION_KEY,
+    TEXT_GW_ANNOTATION_KEY,
+    TEXT_GW_WORKFLOW_ANNOTATION_KEY,
+    Simulation,
+)
 
 
 class FHIAimsOutParser(TextMappingParser):
@@ -136,10 +149,117 @@ class FHIAimsOutParser(TextMappingParser):
         ],
     }
 
-    def get_xc_functionals(self, xc: str) -> List[Dict[str, Any]]:
-        return [dict(name=functional.get('name')) for functional in self._xc_map.get(xc, [])]
+    _section_names = ['full_scf', 'geometry_optimization', 'molecular_dynamics']
 
-    def get_energies(self, source: Dict[str, Any]) -> Dict[str, Any]:
+    def get_fhiaims_file(self, default: str) -> list[str]:
+        maindir = os.path.dirname(self.filepath)
+        base, *ext = default.split('.')
+        ext = '.'.join(ext)
+        base = base.lower()
+        files = os.listdir(maindir)
+        files = [os.path.basename(f) for f in files]
+        files = [
+            os.path.join(maindir, f)
+            for f in files
+            if base.lower() in f.lower() and f.endswith(ext)
+        ]
+        files.sort()
+        return files
+
+    def get_xc_functionals(self, xc: str) -> list[dict[str, Any]]:
+        return [
+            dict(name=functional.get('name')) for functional in self._xc_map.get(xc, [])
+        ]
+
+    def get_dos(
+        self,
+        total_dos_files: list[list[str]],
+        atom_dos_files: list[list[str]],
+        species_dos_files: list[list[str]],
+    ) -> list[dict[str, Any]]:
+        def load_dos(dos_file: str) -> list[dict[str, Any]]:
+            dos_files = self.get_fhiaims_file(dos_file)
+            if not dos_files:
+                return []
+            try:
+                data = np.loadtxt(dos_files[0]).T
+            except Exception:
+                return []
+            if not np.size(data):
+                return []
+            return [
+                dict(energies=data[0], values=value, nenergies=len(data[0]))
+                for value in data[1:]
+            ]
+
+        def get_pdos(dos_files: list[str], dos_labels: list[str], type=str):
+            dos = []
+            for dos_file in dos_files:
+                labels = [label for label in dos_labels if label in dos_file]
+                pdos = load_dos(dos_file)
+                if not pdos:
+                    continue
+                for n, data in enumerate(pdos):
+                    # TODO use these to link pdos to system
+                    data['type'] = type
+                    data['label'] = labels[n % len(labels)]
+                    data['spin'] = 1 if 'spin_dn' in dos_file else 0
+                    data['orbital'] = n - 1 if n else None
+                dos.extend(pdos)
+            return dos
+
+        projected_dos = []
+        # atom-projected dos
+        if atom_dos_files:
+            projected_dos.extend(get_pdos(*atom_dos_files, type='atom'))
+
+        # species-projected dos
+        if species_dos_files:
+            projected_dos.extend(get_pdos(*species_dos_files, type='species'))
+
+        # total dos
+        total_dos = []
+        for dos_file in (
+            total_dos_files[0] if total_dos_files else ['KS_DOS_total_raw.dat']
+        ):
+            dos = load_dos(dos_file)
+            for n, data in enumerate(dos):
+                data['spin'] = n
+                pdata = data.setdefault('projected_dos', [])
+                pdata.extend([d for d in projected_dos if d['spin'] == data['spin']])
+            total_dos.extend(dos)
+
+        return total_dos
+
+    def get_eigenvalues(
+        self, source: list[dict[str, Any]], params: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        n_spin = params.get('Number of spin channels', 1)
+        eigenvalues = []
+        for data in source:
+            kpts = data.get('kpoints', [np.zeros(3)] * n_spin)
+            kpts = np.reshape(kpts, (len(kpts) // n_spin, n_spin, 3))
+            kpts = np.transpose(kpts, axes=(1, 0, 2))[0]
+
+            occs_eigs = data.get('occupation_eigenvalue')
+            n_kpts = len(kpts)
+            n_eigs = len(occs_eigs) // (n_kpts * n_spin)
+            occs_eigs = np.transpose(
+                np.reshape(occs_eigs, (n_kpts, n_spin, n_eigs, 2)), axes=(3, 1, 0, 2)
+            )
+            for spin in range(n_spin):
+                eigenvalues.append(
+                    dict(
+                        nbands=n_eigs,
+                        npoints=n_kpts,
+                        points=kpts,
+                        occupations=occs_eigs[0][spin],
+                        eigenvalues=occs_eigs[1][spin],
+                    )
+                )
+        return eigenvalues
+
+    def get_energies(self, source: dict[str, Any]) -> dict[str, Any]:
         total_keys = ['Total energy uncorrected', 'Total energy']
         energies = {}
         components = []
@@ -156,13 +276,15 @@ class FHIAimsOutParser(TextMappingParser):
     def get_gw_flag(self, gw_flag: str):
         return self._gw_flag_map.get(gw_flag)
 
-    def get_sections(self, source: Dict[str, Any], **kwargs) -> List[Dict[str, Any]]:
+    def get_sections(self, source: dict[str, Any], **kwargs) -> list[dict[str, Any]]:
         result = []
-        section_names = ['full_scf', 'geometry_optimization', 'molecular_dynamics']
-        for name in section_names:
+        include = kwargs.get('include')
+        for name in self._section_names:
             for data in source.get(name, []):
                 res = {}
-                for key in kwargs.get('include', []):
+                for key in data.keys():
+                    if include and key not in include:
+                        continue
                     val = data.get(key, self.data.get(key))
                     if val is not None:
                         res[key] = val
@@ -172,7 +294,6 @@ class FHIAimsOutParser(TextMappingParser):
 
 
 class FHIAimsParser:
-
     def get_mainfile_keys(self, **kwargs):
         re_gw_flag = FHIAimsOutTextParser._re_gw_flag
         buffer = kwargs.get('decoded_buffer', '')
@@ -202,34 +323,51 @@ class FHIAimsParser:
         mainfile: str,
         archive: 'EntryArchive',
         logger: 'BoundLogger',
-        child_archives: dict[str, 'EntryArchive'] = None,
-        **kwargs
+        child_archives: dict[str, 'EntryArchive'] = {},
+        **kwargs,
     ) -> None:
         out_parser = FHIAimsOutParser()
         out_parser.text_parser = FHIAimsOutTextParser()
         out_parser.filepath = mainfile
+        self.out_parser = out_parser
 
         archive_data_parser = MetainfoParser()
-        archive_data_parser.annotation_key = kwargs.get('annotation_key', TEXT_ANNOTATION_KEY)
+        archive_data_parser.annotation_key = kwargs.get(
+            'annotation_key', TEXT_ANNOTATION_KEY
+        )
         archive_data_parser.data_object = Simulation(program=Program(name='FHI-aims'))
 
-        out_parser.convert(archive_data_parser)
+        out_parser.convert(archive_data_parser, remove=True)
 
         archive.data = archive_data_parser.data_object
+        self.out_parser = out_parser
+
+        # separate parsing of dos due to a problem with mapping physical
+        # property variables
+        archive_data_parser.annotation_key = TEXT_DOS_ANNOTATION_KEY
+        out_parser.convert(archive_data_parser, remove=True)
 
         gw_archive = child_archives.get('GW')
         if gw_archive is not None:
             # GW single point
             parser = FHIAimsParser()
-            parser.parse(mainfile, gw_archive, logger, annotation_key=TEXT_GW_ANNOTATION_KEY)
+            parser.parse(
+                mainfile, gw_archive, logger, annotation_key=TEXT_GW_ANNOTATION_KEY
+            )
 
             # DFT-GW workflow
             gw_workflow_archive = self._child_archives.get('GW_workflow')
             parser = FHIAimsParser()
-            parser.parse(mainfile, gw_workflow_archive, logger, annotation_key=TEXT_GW_WORKFLOW_ANNOTATION_KEY)
+            parser.parse(
+                mainfile,
+                gw_workflow_archive,
+                logger,
+                annotation_key=TEXT_GW_WORKFLOW_ANNOTATION_KEY,
+            )
 
+        # TODO remove this only for debug
         self.out_parser = out_parser
         self.archive_data_parser = archive_data_parser
-
-        out_parser.close()
-        archive_data_parser.close()
+        # close file contexts
+        # out_parser.close()
+        # archive_data_parser.close()

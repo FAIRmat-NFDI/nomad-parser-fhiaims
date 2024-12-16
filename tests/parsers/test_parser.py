@@ -1,6 +1,7 @@
 import logging
 
 from nomad.datamodel import EntryArchive
+
 from nomad_parser_fhiaims.parsers.myparser import MyParser
 
 

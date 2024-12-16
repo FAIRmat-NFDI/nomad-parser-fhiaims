@@ -3,19 +3,12 @@ from typing import (
 )
 
 if TYPE_CHECKING:
-    from nomad.datamodel.datamodel import (
-        EntryArchive,
-    )
-    from structlog.stdlib import (
-        BoundLogger,
-    )
+    pass
 from datetime import datetime
 
-from nomad.parsing.file_parser import TextParser, Quantity
-from nomad.units import ureg
-
 import numpy as np
-
+from nomad.parsing.file_parser import Quantity, TextParser
+from nomad.units import ureg
 
 RE_FLOAT = r'[-+]?\d+\.\d*(?:[Ee][-+]\d+)?'
 RE_N = r'[\n\r]'
@@ -29,7 +22,6 @@ def str_to_unit(val_in):
     elif val.startswith('b'):
         unit = 1 / ureg.bohr
     return unit
-
 
 
 class FHIAimsOutParser(TextParser):
@@ -200,7 +192,7 @@ class FHIAimsOutParser(TextParser):
 
         date_time = Quantity(
             'date_time',
-            rf'Date\s*:\s*(\d+), Time\s*:\s*([\d\.]+)\s*',
+            r'Date\s*:\s*(\d+), Time\s*:\s*([\d\.]+)\s*',
             repeats=False,
             convert=False,
             str_operation=lambda x: datetime.strptime(
@@ -346,7 +338,7 @@ class FHIAimsOutParser(TextParser):
                 val = ureg(val_in.replace('^', '**'))
             except Exception:
                 self.logger.warning(
-                    rf'Problem parsing some units from .out file, could not convert.',
+                    r'Problem parsing some units from .out file, could not convert.',
                     details={'value': val_in},
                 )
                 val = None
@@ -537,7 +529,7 @@ class FHIAimsOutParser(TextParser):
             ),
             Quantity(
                 'md_thermostat_units',
-                rf'Thermostat\s*units\s*for\s*molecular\s*dynamics\s*:\s*([A-Za-z\^\-0-9]*)',
+                r'Thermostat\s*units\s*for\s*molecular\s*dynamics\s*:\s*([A-Za-z\^\-0-9]*)',
                 str_operation=str_to_ureg,
                 repeats=False,
                 convert=False,
@@ -872,4 +864,3 @@ class FHIAimsOutParser(TextParser):
 
     def get_number_of_spin_channels(self):
         return self.get('array_size_parameters', {}).get('Number of spin channels', 1)
-
