@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Union
 
 if TYPE_CHECKING:
     from nomad.datamodel.datamodel import (
@@ -20,6 +20,7 @@ from nomad.parsing.file_parser.mapping_parser import (
 )
 from nomad_simulations.schema_packages.general import Program
 
+from nomad_parser_fhiaims.parsers.out_parser import RE_GW_FLAG
 from nomad_parser_fhiaims.parsers.out_parser import (
     FHIAimsOutParser as FHIAimsOutTextParser,
 )
@@ -294,14 +295,13 @@ class FHIAimsOutParser(TextMappingParser):
 
 
 class FHIAimsParser:
-    def get_mainfile_keys(self, **kwargs):
-        re_gw_flag = FHIAimsOutTextParser._re_gw_flag
+    def get_mainfile_keys(self, **kwargs) -> Union[bool, list[str]]:
         buffer = kwargs.get('decoded_buffer', '')
-        match = re.search(re_gw_flag, buffer)
+        match = re.search(RE_GW_FLAG, buffer)
         if match:
             gw_flag = match[1]
         else:
-            overlap = len(re_gw_flag) + 1
+            overlap = len(RE_GW_FLAG) + 1
             block = max(len(buffer), 4916)
             match = None
             position = len(buffer)
@@ -309,7 +309,7 @@ class FHIAimsParser:
                 while True:
                     f.seek(position - overlap)
                     text = f.read(block + overlap)
-                    match = re.search(re_gw_flag, text)
+                    match = re.search(RE_GW_FLAG, text)
                     position += block
                     if not text or match:
                         gw_flag = match[1]
