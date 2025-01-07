@@ -21,9 +21,8 @@ from nomad.parsing.file_parser.mapping_parser import (
 from nomad_simulations.schema_packages.general import Program
 
 from nomad_parser_fhiaims.parsers.out_parser import RE_GW_FLAG
-from nomad_parser_fhiaims.parsers.out_parser import (
-    FHIAimsOutParser as FHIAimsOutTextParser,
-)
+from nomad_parser_fhiaims.parsers.out_parser import FHIAimsOutReader
+
 from nomad_parser_fhiaims.schema_packages.schema_package import (
     TEXT_ANNOTATION_KEY,
     TEXT_DOS_ANNOTATION_KEY,
@@ -33,7 +32,7 @@ from nomad_parser_fhiaims.schema_packages.schema_package import (
 )
 
 
-class FHIAimsOutParser(TextMappingParser):
+class FHIAimsOutConverter(TextMappingParser):
     _gw_flag_map = {
         'gw': 'G0W0',
         'gw_expt': 'G0W0',
@@ -314,7 +313,7 @@ class FHIAimsParser:
                     if not text or match:
                         gw_flag = match[1]
                         break
-        if gw_flag in FHIAimsOutParser._gw_flag_map.keys():
+        if gw_flag in RE_GW_FLAG.keys():
             return ['GW', 'GW_workflow']
         return True
 
@@ -326,26 +325,26 @@ class FHIAimsParser:
         child_archives: dict[str, 'EntryArchive'] = {},
         **kwargs,
     ) -> None:
-        out_parser = FHIAimsOutParser()
-        out_parser.text_parser = FHIAimsOutTextParser()
-        out_parser.filepath = mainfile
-        self.out_parser = out_parser
+        out_converter = FHIAimsOutConverter()
+        out_converter.text_parser = FHIAimsOutReader()
+        out_converter.filepath = mainfile
+        self.out_parser = out_converter
 
-        archive_data_parser = MetainfoParser()
-        archive_data_parser.annotation_key = kwargs.get(
+        archive_data_handler = MetainfoParser()
+        archive_data_handler.annotation_key = kwargs.get(
             'annotation_key', TEXT_ANNOTATION_KEY
         )
-        archive_data_parser.data_object = Simulation(program=Program(name='FHI-aims'))
+        archive_data_handler.data_object = Simulation(program=Program(name='FHI-aims'))
 
-        out_parser.convert(archive_data_parser, remove=True)
+        out_converter.convert(archive_data_handler, remove=True)
 
-        archive.data = archive_data_parser.data_object
-        self.out_parser = out_parser
+        archive.data = archive_data_handler.data_object
+        self.out_parser = out_converter
 
         # separate parsing of dos due to a problem with mapping physical
         # property variables
-        archive_data_parser.annotation_key = TEXT_DOS_ANNOTATION_KEY
-        out_parser.convert(archive_data_parser, remove=True)
+        archive_data_handler.annotation_key = TEXT_DOS_ANNOTATION_KEY
+        out_converter.convert(archive_data_handler, remove=True)
 
         gw_archive = child_archives.get('GW')
         if gw_archive is not None:
@@ -366,8 +365,8 @@ class FHIAimsParser:
             )
 
         # TODO remove this only for debug
-        self.out_parser = out_parser
-        self.archive_data_parser = archive_data_parser
+        self.out_parser = out_converter
+        self.archive_data_parser = archive_data_handler
         # close file contexts
-        # out_parser.close()
-        # archive_data_parser.close()
+        # out_converter.close()
+        # archive_data_handler.close()

@@ -2,7 +2,6 @@ from nomad.config.models.plugins import ParserEntryPoint
 
 
 class EntryPoint(ParserEntryPoint):
-
     def load(self):
         from nomad.parsing.parser import MatchingParserInterface
 
