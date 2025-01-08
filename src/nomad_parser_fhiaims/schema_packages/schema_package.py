@@ -1,13 +1,11 @@
-from typing import (
-    TYPE_CHECKING,
-)
+from typing import TYPE_CHECKING, Union
 
 if TYPE_CHECKING:
     pass
 
 from nomad.config import config
-from nomad.metainfo import SchemaPackage
-from nomad.datamodel.metainfo.annotations import Mapper
+from nomad.metainfo import SchemaPackage, Property
+from nomad.datamodel.metainfo.annotations import Mapper, AnnotationModel
 from nomad_simulations.schema_packages import (
     general,
     model_method,
@@ -87,6 +85,9 @@ class TotalEnergy(properties.energies.TotalEnergy):
 
 
 class TotalForce(properties.forces.TotalForce):
+    properties.forces.TotalForce.rank.m_annotations.setdefault(
+        MAPPING_ANNOTATION_KEY, {}
+    )[TEXT_ANNOTATION_KEY] = Mapper(mapper='.rank')
     properties.forces.TotalForce.value.m_annotations.setdefault(
         MAPPING_ANNOTATION_KEY, {}
     )[TEXT_ANNOTATION_KEY] = Mapper(mapper='.forces')
@@ -153,7 +154,7 @@ class Outputs(outputs.Outputs):
 
     outputs.Outputs.total_forces.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
         TEXT_ANNOTATION_KEY
-    ] = Mapper(mapper='.@')
+    ] = Mapper(mapper=('get_forces', ['.@']))
 
     outputs.Outputs.electronic_dos.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
         TEXT_DOS_ANNOTATION_KEY

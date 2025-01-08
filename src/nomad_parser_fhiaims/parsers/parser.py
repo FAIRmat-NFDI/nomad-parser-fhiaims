@@ -20,9 +20,7 @@ from nomad.parsing.file_parser.mapping_parser import (
 )
 from nomad_simulations.schema_packages.general import Program
 
-from nomad_parser_fhiaims.parsers.out_parser import RE_GW_FLAG
-from nomad_parser_fhiaims.parsers.out_parser import FHIAimsOutReader
-
+from nomad_parser_fhiaims.parsers.out_parser import RE_GW_FLAG, FHIAimsOutReader
 from nomad_parser_fhiaims.schema_packages.schema_package import (
     TEXT_ANNOTATION_KEY,
     TEXT_DOS_ANNOTATION_KEY,
@@ -272,6 +270,13 @@ class FHIAimsOutConverter(TextMappingParser):
             components.append({'name': key, 'value': val})
         energies['components'] = components
         return energies
+
+    def get_forces(self, source: dict[str, Any]) -> dict[str, Any]:
+        return dict(
+            forces=source.get('forces'),
+            npoints=len(source.get('forces', [])),
+            rank=[3]
+        )
 
     def get_gw_flag(self, gw_flag: str):
         return self._gw_flag_map.get(gw_flag)
