@@ -18,7 +18,7 @@ from nomad.parsing.file_parser.mapping_parser import (
 from nomad.parsing.file_parser.mapping_parser import (
     TextParser as TextMappingParser,
 )
-from nomad_simulations.schema_packages.general import Program
+from nomad_simulations.schema_packages.general import Program, Simulation
 
 from nomad_parser_fhiaims.parsers.out_parser import RE_GW_FLAG, FHIAimsOutReader
 from nomad_parser_fhiaims.schema_packages.schema_package import (
@@ -26,7 +26,6 @@ from nomad_parser_fhiaims.schema_packages.schema_package import (
     TEXT_DOS_ANNOTATION_KEY,
     TEXT_GW_ANNOTATION_KEY,
     TEXT_GW_WORKFLOW_ANNOTATION_KEY,
-    Simulation,
 )
 
 
@@ -273,9 +272,7 @@ class FHIAimsOutConverter(TextMappingParser):
 
     def get_forces(self, source: dict[str, Any]) -> dict[str, Any]:
         return dict(
-            forces=source.get('forces'),
-            npoints=len(source.get('forces', [])),
-            rank=[3]
+            forces=source.get('forces'), npoints=len(source.get('forces', [])), rank=[3]
         )
 
     def get_gw_flag(self, gw_flag: str):

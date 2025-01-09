@@ -1,11 +1,11 @@
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass
 
-from nomad.config import config
-from nomad.metainfo import SchemaPackage, Property
-from nomad.datamodel.metainfo.annotations import Mapper, AnnotationModel
+from nomad.datamodel.metainfo.annotations import Mapper
+from nomad.metainfo import SchemaPackage
+from nomad.parsing.file_parser.mapping_parser import MAPPING_ANNOTATION_KEY
 from nomad_simulations.schema_packages import (
     general,
     model_method,
@@ -13,11 +13,6 @@ from nomad_simulations.schema_packages import (
     outputs,
     properties,
     variables,
-)
-from nomad.parsing.file_parser.mapping_parser import MAPPING_ANNOTATION_KEY
-
-configuration = config.get_plugin_entry_point(
-    'nomad_parser_fhiaims.schema_packages:schema_package_entry_point'
 )
 
 m_package = SchemaPackage()
@@ -28,223 +23,207 @@ TEXT_GW_ANNOTATION_KEY = 'text_gw'
 TEXT_GW_WORKFLOW_ANNOTATION_KEY = 'text_gw_workflow'
 
 
-class Program(general.Program):
-    general.Program.version.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
-        TEXT_ANNOTATION_KEY
-    ] = Mapper(mapper='.version')
+general.Program.version.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_ANNOTATION_KEY
+] = Mapper(mapper='.version')
 
 
-class XCFunctional(model_method.XCFunctional):
-    model_method.XCFunctional.libxc_name.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_ANNOTATION_KEY] = Mapper(mapper='.name')
+model_method.XCFunctional.libxc_name.m_annotations.setdefault(
+    MAPPING_ANNOTATION_KEY, {}
+)[TEXT_ANNOTATION_KEY] = Mapper(mapper='.name')
 
 
-class DFT(model_method.DFT):
-    model_method.DFT.xc_functionals.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_ANNOTATION_KEY] = Mapper(mapper=('get_xc_functionals', ['.controlInOut_xc']))
+model_method.DFT.xc_functionals.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_ANNOTATION_KEY
+] = Mapper(mapper=('get_xc_functionals', ['.controlInOut_xc']))
 
 
-class GW(model_method.GW):
-    model_method.GW.type.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
-        TEXT_GW_ANNOTATION_KEY
-    ] = Mapper(mapper=('get_gw_flag', ['.gw_flag']))
+model_method.GW.type.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_GW_ANNOTATION_KEY
+] = Mapper(mapper=('get_gw_flag', ['.gw_flag']))
 
 
-class AtomicCell(model_system.AtomicCell):
-    model_system.AtomicCell.lattice_vectors.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_ANNOTATION_KEY] = Mapper(mapper='.lattice_vectors')
+model_system.AtomicCell.lattice_vectors.m_annotations.setdefault(
+    MAPPING_ANNOTATION_KEY, {}
+)[TEXT_ANNOTATION_KEY] = Mapper(mapper='.lattice_vectors')
 
-    model_system.AtomicCell.positions.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_ANNOTATION_KEY] = Mapper(mapper='.structure.positions', unit='angstrom')
-
-
-class ModelSystem(model_system.ModelSystem):
-    model_system.AtomicCell.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
-        TEXT_ANNOTATION_KEY
-    ] = Mapper(mapper='.@')
+model_system.AtomicCell.positions.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_ANNOTATION_KEY
+] = Mapper(mapper='.structure.positions', unit='angstrom')
 
 
-class EnergyContribution(properties.energies.EnergyContribution):
-    properties.energies.EnergyContribution.name.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_ANNOTATION_KEY] = Mapper(mapper='.name')
+model_system.AtomicCell.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_ANNOTATION_KEY
+] = Mapper(mapper='.@')
 
 
-class TotalEnergy(properties.energies.TotalEnergy):
-    properties.energies.TotalEnergy.value.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_ANNOTATION_KEY] = Mapper(mapper='.value')
-
-    properties.energies.TotalEnergy.contributions.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_ANNOTATION_KEY] = Mapper(mapper='.components')
+properties.energies.EnergyContribution.name.m_annotations.setdefault(
+    MAPPING_ANNOTATION_KEY, {}
+)[TEXT_ANNOTATION_KEY] = Mapper(mapper='.name')
 
 
-class TotalForce(properties.forces.TotalForce):
-    properties.forces.TotalForce.rank.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_ANNOTATION_KEY] = Mapper(mapper='.rank')
-    properties.forces.TotalForce.value.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_ANNOTATION_KEY] = Mapper(mapper='.forces')
+properties.energies.TotalEnergy.value.m_annotations.setdefault(
+    MAPPING_ANNOTATION_KEY, {}
+)[TEXT_ANNOTATION_KEY] = Mapper(mapper='.value')
+
+properties.energies.TotalEnergy.contributions.m_annotations.setdefault(
+    MAPPING_ANNOTATION_KEY, {}
+)[TEXT_ANNOTATION_KEY] = Mapper(mapper='.components')
 
 
-class Energy2(variables.Energy2):
-    variables.Energy2.n_points.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
-        TEXT_DOS_ANNOTATION_KEY
-    ] = Mapper(mapper='.nenergies')
-    variables.Energy2.points.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
-        TEXT_DOS_ANNOTATION_KEY
-    ] = Mapper(mapper='.energies')
+properties.forces.TotalForce.rank.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_ANNOTATION_KEY
+] = Mapper(mapper='.rank')
+properties.forces.TotalForce.value.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_ANNOTATION_KEY
+] = Mapper(mapper='.forces')
 
 
-class DosProfile(properties.spectral_profile.DOSProfile):
-    properties.spectral_profile.DOSProfile.value.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_DOS_ANNOTATION_KEY] = Mapper(mapper='.values')
+variables.Energy2.n_points.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_DOS_ANNOTATION_KEY
+] = Mapper(mapper='.nenergies')
+variables.Energy2.points.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_DOS_ANNOTATION_KEY
+] = Mapper(mapper='.energies')
 
 
-class ElectronicDensityOfStates(properties.spectral_profile.ElectronicDensityOfStates):
-    properties.spectral_profile.ElectronicDensityOfStates.value.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_DOS_ANNOTATION_KEY] = Mapper(mapper='.values')
-
-    variables.Energy2.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
-        TEXT_DOS_ANNOTATION_KEY
-    ] = Mapper(mapper='.@')
-
-    properties.spectral_profile.ElectronicDensityOfStates.projected_dos.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_DOS_ANNOTATION_KEY] = Mapper(mapper='.projected_dos')
+properties.spectral_profile.DOSProfile.value.m_annotations.setdefault(
+    MAPPING_ANNOTATION_KEY, {}
+)[TEXT_DOS_ANNOTATION_KEY] = Mapper(mapper='.values')
 
 
-class Variables(variables.Variables):
-    variables.Variables.n_points.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
-        TEXT_ANNOTATION_KEY
-    ] = Mapper(mapper='.npoints')
-    # TODO this does not work as points is scalar
-    # variables.Variables.points.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[TEXT_ANNOTATION_KEY] = (
-    #   Mapper(mapper='.points')
-    # )
+properties.spectral_profile.ElectronicDensityOfStates.value.m_annotations.setdefault(
+    MAPPING_ANNOTATION_KEY, {}
+)[TEXT_DOS_ANNOTATION_KEY] = Mapper(mapper='.values')
+
+variables.Energy2.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_DOS_ANNOTATION_KEY
+] = Mapper(mapper='.@')
+
+properties.spectral_profile.ElectronicDensityOfStates.projected_dos.m_annotations.setdefault(
+    MAPPING_ANNOTATION_KEY, {}
+)[TEXT_DOS_ANNOTATION_KEY] = Mapper(mapper='.projected_dos')
 
 
-class ElectronicEigenvalues(properties.ElectronicEigenvalues):
-    properties.ElectronicEigenvalues.n_bands.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_ANNOTATION_KEY] = Mapper(mapper='.nbands')
-    properties.ElectronicEigenvalues.variables.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_ANNOTATION_KEY] = Mapper(mapper='.@', search='.@[0]')
-    properties.ElectronicEigenvalues.value.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_ANNOTATION_KEY] = Mapper(mapper='.eigenvalues')
-    properties.ElectronicEigenvalues.occupation.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_ANNOTATION_KEY] = Mapper(mapper='.occupations')
+variables.Variables.n_points.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_ANNOTATION_KEY
+] = Mapper(mapper='.npoints')
+# TODO this does not work as points is scalar
+variables.Variables.points.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_ANNOTATION_KEY
+] = Mapper(mapper='.points')
 
 
-class Outputs(outputs.Outputs):
-    outputs.Outputs.total_energies.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
-        TEXT_ANNOTATION_KEY
-    ] = Mapper(mapper=('get_energies', ['.@']))
+properties.ElectronicEigenvalues.n_bands.m_annotations.setdefault(
+    MAPPING_ANNOTATION_KEY, {}
+)[TEXT_ANNOTATION_KEY] = Mapper(mapper='.nbands')
+properties.ElectronicEigenvalues.variables.m_annotations.setdefault(
+    MAPPING_ANNOTATION_KEY, {}
+)[TEXT_ANNOTATION_KEY] = Mapper(mapper='.@', search='.@[0]')
+properties.ElectronicEigenvalues.value.m_annotations.setdefault(
+    MAPPING_ANNOTATION_KEY, {}
+)[TEXT_ANNOTATION_KEY] = Mapper(mapper='.eigenvalues')
+properties.ElectronicEigenvalues.occupation.m_annotations.setdefault(
+    MAPPING_ANNOTATION_KEY, {}
+)[TEXT_ANNOTATION_KEY] = Mapper(mapper='.occupations')
 
-    outputs.Outputs.total_forces.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
-        TEXT_ANNOTATION_KEY
-    ] = Mapper(mapper=('get_forces', ['.@']))
 
-    outputs.Outputs.electronic_dos.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
-        TEXT_DOS_ANNOTATION_KEY
-    ] = Mapper(
-        mapper=(
-            'get_dos',
-            [
-                '.total_dos_files',
-                '.atom_projected_dos_files',
-                '.species_projected_dos_files',
-            ],
-        )
+outputs.Outputs.total_energies.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_ANNOTATION_KEY
+] = Mapper(mapper=('get_energies', ['.@']))
+
+outputs.Outputs.total_forces.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_ANNOTATION_KEY
+] = Mapper(mapper=('get_forces', ['.@']))
+
+outputs.Outputs.electronic_dos.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_DOS_ANNOTATION_KEY
+] = Mapper(
+    mapper=(
+        'get_dos',
+        [
+            '.total_dos_files',
+            '.atom_projected_dos_files',
+            '.species_projected_dos_files',
+        ],
     )
+)
 
-    outputs.Outputs.electronic_eigenvalues.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_ANNOTATION_KEY] = Mapper(
-        mapper=('get_eigenvalues', ['.eigenvalues', 'array_size_parameters'])
+outputs.Outputs.electronic_eigenvalues.m_annotations.setdefault(
+    MAPPING_ANNOTATION_KEY, {}
+)[TEXT_ANNOTATION_KEY] = Mapper(
+    mapper=('get_eigenvalues', ['.eigenvalues', 'array_size_parameters'])
+)
+
+
+general.Simulation.program.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_ANNOTATION_KEY
+] = Mapper(mapper='.@')
+
+model_method.DFT.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_ANNOTATION_KEY
+] = Mapper(mapper='.@')
+
+model_method.GW.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_GW_ANNOTATION_KEY
+] = Mapper(mapper='.@')
+
+general.Simulation.model_system.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_ANNOTATION_KEY
+] = Mapper(
+    mapper=(
+        'get_sections',
+        ['.@'],
+        dict(include=['lattice_vectors', 'structure']),
     )
+)
 
-
-class Simulation(general.Simulation):
-    general.Simulation.program.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
-        TEXT_ANNOTATION_KEY
-    ] = Mapper(mapper='.@')
-
-    model_method.DFT.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
-        TEXT_ANNOTATION_KEY
-    ] = Mapper(mapper='.@')
-
-    model_method.GW.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
-        TEXT_GW_ANNOTATION_KEY
-    ] = Mapper(mapper='.@')
-
-    general.Simulation.model_system.m_annotations.setdefault(
-        MAPPING_ANNOTATION_KEY, {}
-    )[TEXT_ANNOTATION_KEY] = Mapper(
-        mapper=(
-            'get_sections',
-            ['.@'],
-            dict(include=['lattice_vectors', 'structure']),
-        )
+general.Simulation.outputs.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_ANNOTATION_KEY
+] = Mapper(
+    mapper=(
+        'get_sections',
+        ['.@'],
+        dict(
+            include=[
+                'energy',
+                'energy_components',
+                'forces',
+                'eigenvalues',
+            ]
+        ),
     )
+)
 
-    general.Simulation.outputs.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
-        TEXT_ANNOTATION_KEY
-    ] = Mapper(
-        mapper=(
-            'get_sections',
-            ['.@'],
-            dict(
-                include=[
-                    'energy',
-                    'energy_components',
-                    'forces',
-                    'eigenvalues',
-                ]
-            ),
-        )
+general.Simulation.outputs.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+    TEXT_DOS_ANNOTATION_KEY
+] = Mapper(
+    mapper=(
+        'get_sections',
+        ['.@'],
+        dict(
+            include=[
+                'total_dos_files',
+                'species_projected_dos_files',
+            ]
+        ),
     )
-
-    general.Simulation.outputs.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
-        TEXT_DOS_ANNOTATION_KEY
-    ] = Mapper(
-        mapper=(
-            'get_sections',
-            ['.@'],
-            dict(
-                include=[
-                    'total_dos_files',
-                    'species_projected_dos_files',
-                ]
-            ),
-        )
-    )
+)
 
 
-Simulation.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+general.Simulation.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
     TEXT_ANNOTATION_KEY
 ] = Mapper(mapper='@')
 
-Simulation.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+general.Simulation.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
     TEXT_DOS_ANNOTATION_KEY
 ] = Mapper(mapper='@')
 
-Simulation.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+general.Simulation.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
     TEXT_GW_ANNOTATION_KEY
 ] = Mapper(mapper='@')
 
-Simulation.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
+general.Simulation.m_def.m_annotations.setdefault(MAPPING_ANNOTATION_KEY, {})[
     TEXT_GW_WORKFLOW_ANNOTATION_KEY
 ] = Mapper(mapper='@')
 
